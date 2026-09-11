@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -62,7 +62,10 @@ app.add_middleware(
 )
 
 
-@app.get("/api/v1/health", response_model=HealthResponse, tags=["ops"])
+router = APIRouter()
+
+
+@router.get("/v1/health", response_model=HealthResponse, tags=["ops"])
 def health() -> HealthResponse:
     configured = bool(os.getenv("ANTHROPIC_API_KEY"))
     return HealthResponse(
@@ -73,7 +76,7 @@ def health() -> HealthResponse:
     )
 
 
-@app.post("/api/v1/code-assist", response_model=CodeAssistResponse, tags=["assistant"])
+@router.post("/v1/code-assist", response_model=CodeAssistResponse, tags=["assistant"])
 def code_assist(request: CodeAssistRequest) -> CodeAssistResponse:
     """Redact PII, call Claude, and write exactly one audit record."""
     audit_id = audit.new_audit_id()
@@ -127,10 +130,20 @@ def code_assist(request: CodeAssistRequest) -> CodeAssistResponse:
     )
 
 
-@app.get("/api/v1/audit-trail", response_model=AuditTrailResponse, tags=["ops"])
+@router.get("/v1/audit-trail", response_model=AuditTrailResponse, tags=["ops"])
 def audit_trail(limit: int = 100) -> AuditTrailResponse:
     records = audit.recent(min(max(limit, 1), 500))
     return AuditTrailResponse(count=len(records), records=records)
+
+
+# --- Router mounting ---------------------------------------------------------
+# Serverless hosts differ in what path the function receives: some pass the
+# full request path, others strip the prefix that selected the function. The
+# router is therefore mounted at both, so the same build works locally, in a
+# container, and on Vercel. Only the canonical /api prefix is documented.
+
+app.include_router(router, prefix="/api", tags=["api"])
+app.include_router(router, include_in_schema=False)
 
 
 # --- Static SPA -------------------------------------------------------------

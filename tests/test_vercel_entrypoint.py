@@ -61,3 +61,19 @@ def test_post_body_survives_rewrite(client, monkeypatch):
     )
     assert r.status_code == 200
     assert r.json()["response"] == "ok"
+
+
+def test_stripped_prefix_shape(client):
+    """Some serverless hosts strip the prefix that selected the function.
+
+    The router is mounted at both /api/v1 and /v1 so the same build works
+    wherever it runs.
+    """
+    assert client.get("/v1/health").status_code == 200
+    assert client.get("/api/v1/health").status_code == 200
+
+
+def test_both_mounts_return_same_payload(client):
+    a = client.get("/v1/health").json()
+    b = client.get("/api/v1/health").json()
+    assert a == b
