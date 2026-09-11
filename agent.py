@@ -10,9 +10,11 @@ import anthropic
 
 from models import ContextDomain
 
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5")
-MAX_TOKENS = int(os.getenv("ANTHROPIC_MAX_TOKENS", "8000"))
-EFFORT = os.getenv("ANTHROPIC_EFFORT", "high")
+# `or` rather than a getenv default: a variable saved empty in a hosting
+# dashboard comes back as "", which would otherwise override the default.
+MODEL = os.getenv("ANTHROPIC_MODEL") or "claude-opus-5"
+MAX_TOKENS = int(os.getenv("ANTHROPIC_MAX_TOKENS") or "8000")
+EFFORT = os.getenv("ANTHROPIC_EFFORT") or "high"
 
 _BASE_SYSTEM = (
     "You are the TD GenAI Platform code assistant, serving engineers inside a "
