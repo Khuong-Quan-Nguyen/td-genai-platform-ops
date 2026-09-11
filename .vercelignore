@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+.env
+audit-trail.jsonl
+frontend/node_modules/
+Dockerfile
+.dockerignore

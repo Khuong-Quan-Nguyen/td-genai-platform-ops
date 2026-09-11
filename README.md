@@ -83,7 +83,39 @@ Returns `audit_id`, `response`, `tokens_used`, `input_tokens`, `output_tokens`,
 
 **`GET /api/v1/health`** — `status` is `degraded` when no API key is configured.
 
-## Docker
+## Deployment (Vercel)
+
+Vercel's Git integration builds and deploys every push to `main`. The React SPA
+is served from the CDN; FastAPI runs as a Python function via `api/index.py`.
+
+**Required environment variables** (Vercel -> Project -> Settings -> Environment Variables):
+
+| Variable | Value |
+|---|---|
+| `ANTHROPIC_API_KEY` | Your Claude API key |
+| `DATABASE_URL` | Postgres connection string (see below) |
+| `ANTHROPIC_EFFORT` | `medium` - keeps calls inside the 60s function timeout |
+
+### Postgres is required on Vercel
+
+Serverless functions have an ephemeral filesystem and each request may hit a
+different instance, so the JSONL audit trail does not work there. Set
+`DATABASE_URL` and `audit.py` switches to Postgres automatically, creating its
+own table on first use.
+
+Use a **pooled** connection string (Neon's `-pooler` host, or PgBouncer) -
+serverless opens a connection per invocation.
+
+Without `DATABASE_URL`, the JSONL backend is used. That is correct for local
+development and for a container with a mounted volume.
+
+### Function timeout
+
+`vercel.json` sets `maxDuration: 60`, the Hobby ceiling. Observed latency at
+`high` effort is ~24s; a long prompt can exceed 60s and fail, which is why the
+deployed environment should run at `medium`.
+
+## Docker (alternative host)
 
 ```bash
 docker build -t td-genai-platform-ops .
@@ -91,22 +123,12 @@ docker run -p 8000:8000 --env-file .env td-genai-platform-ops
 ```
 
 Multi-stage: Node 22 builds the SPA, Python 3.13-slim runs it as non-root
-`appuser`. Mount a volume at `/app/data` to persist the audit log.
-
-## Azure App Service
-
-`.github/workflows/deploy.yml` runs tests, pushes the image to GHCR, and
-deploys on every push to `main`. Required repository secrets:
-
-- `AZURE_WEBAPP_PUBLISH_PROFILE` — from the App Service **Get publish profile** button
-
-Set `ANTHROPIC_API_KEY` in App Service → Configuration → Application settings
-(not in the image). App Service injects `$PORT`; the container honours it.
+`appuser`. Mount a volume at `/app/data` to persist the JSONL audit log.
 
 ## Known gaps (MVP)
 
-- Audit trail is file-backed, not a database — fine for a single instance,
-  needs Postgres or Azure Table Storage before scale-out.
-- No authentication on the API; App Service Easy Auth or APIM sits in front.
+- Audit trail has no retention policy or archival; rows grow unbounded.
+- **No authentication on the API.** A public deployment lets anyone spend
+  your API credits. Put auth or a rate limit in front before sharing a URL.
 - PII detectors are regex + Luhn. They catch the common Canadian formats but
   are not a substitute for a full DLP scan.
