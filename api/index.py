@@ -2,14 +2,15 @@
 
 Vercel's Python runtime looks for a module-level ASGI app named `app`.
 
-Path handling: a Vercel rewrite can replace the request path with the
-function's own path, which would make FastAPI see `/api/index` for every
-request and match nothing. `vercel.json` forwards the real path as a `__path`
-query parameter; the middleware below restores it into the ASGI scope before
-routing, preserving the caller's own query parameters.
+Serverless hosts differ in what path the function receives. Two defences:
 
-`VERCEL_DIAG=1` enables a catch-all that reports what the function actually
-received - used to diagnose routing, then turned off.
+1. `vercel.json` forwards the real path as a `__path` query parameter, which
+   `RestoreOriginalPath` puts back into the ASGI scope.
+2. `main.py` mounts the API router at both `/api/v1` and `/v1`.
+
+A last-resort catch-all reports what actually arrived, so a routing mismatch
+is diagnosable from the response instead of guessed at. It is registered after
+every real route, so it only ever sees requests nothing else matched.
 """
 import os
 import pathlib
@@ -19,6 +20,7 @@ from urllib.parse import parse_qs, urlencode
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from fastapi import Request  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
 
 from main import app as _app  # noqa: E402
 
@@ -26,7 +28,7 @@ _PATH_PARAM = "__path"
 
 
 class RestoreOriginalPath:
-    """Undo Vercel's rewrite so FastAPI sees the caller's real path."""
+    """Undo a host rewrite so FastAPI sees the caller's real path."""
 
     def __init__(self, inner):
         self.inner = inner
@@ -44,26 +46,34 @@ class RestoreOriginalPath:
         await self.inner(scope, receive, send)
 
 
-if os.getenv("VERCEL_DIAG") == "1":
-
-    @_app.api_route("/{diag_path:path}", methods=["GET"], include_in_schema=False)
-    async def _diagnose(request: Request, diag_path: str):
-        """Report what reached the function. Never returns secrets."""
-        return {
-            "diagnostic": True,
+@_app.api_route(
+    "/{unmatched:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    include_in_schema=False,
+)
+async def _unmatched(request: Request, unmatched: str):
+    """Report what reached the function. Contains no secrets."""
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": "no route matched",
             "received_path": request.url.path,
             "query_string": str(request.url.query),
-            "root_path": request.scope.get("root_path"),
-            "middleware_active": True,
+            "root_path": request.scope.get("root_path", ""),
+            "method": request.method,
+            "known_routes": sorted(
+                {r.path for r in _app.routes if getattr(r, "path", "").startswith(("/api", "/v1"))}
+            ),
             "vercel_headers": {
                 k: v for k, v in request.headers.items() if k.lower().startswith("x-vercel")
             },
-            "env": {
-                "has_api_key": bool(os.getenv("ANTHROPIC_API_KEY")),
-                "has_database_url": bool(os.getenv("DATABASE_URL")),
-                "effort": os.getenv("ANTHROPIC_EFFORT"),
+            "env_present": {
+                "ANTHROPIC_API_KEY": bool(os.getenv("ANTHROPIC_API_KEY")),
+                "DATABASE_URL": bool(os.getenv("DATABASE_URL")),
+                "ANTHROPIC_EFFORT": os.getenv("ANTHROPIC_EFFORT"),
             },
-        }
+        },
+    )
 
 
 app = RestoreOriginalPath(_app)
