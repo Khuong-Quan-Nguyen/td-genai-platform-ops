@@ -86,7 +86,11 @@ Returns `audit_id`, `response`, `tokens_used`, `input_tokens`, `output_tokens`,
 ## Deployment (Vercel)
 
 Vercel's Git integration builds and deploys every push to `main`. The React SPA
-is served from the CDN; FastAPI runs as a Python function via `api/index.py`.
+is served from the CDN. Vercel's zero-config FastAPI detection finds `app` in the
+root `main.py` and runs it as a single Python function that receives the real
+request path. Do not add an `api/` directory function or a rewrite for `/api/*`:
+either one routes API calls away from `main.app`, and every call then lands on
+the SPA catch-all (GET 404, POST 405).
 
 **Required environment variables** (Vercel -> Project -> Settings -> Environment Variables):
 

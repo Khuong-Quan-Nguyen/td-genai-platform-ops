@@ -137,13 +137,11 @@ def audit_trail(limit: int = 100) -> AuditTrailResponse:
 
 
 # --- Router mounting ---------------------------------------------------------
-# Serverless hosts differ in what path the function receives: some pass the
-# full request path, others strip the prefix that selected the function. The
-# router is therefore mounted at both, so the same build works locally, in a
-# container, and on Vercel. Only the canonical /api prefix is documented.
+# On Vercel this module is the entrypoint: zero-config FastAPI detection picks
+# up a root-level main.py and runs `app` as one function that receives the
+# caller's real path, so no path rewriting is needed anywhere.
 
 app.include_router(router, prefix="/api", tags=["api"])
-app.include_router(router, include_in_schema=False)
 
 
 # --- Static SPA -------------------------------------------------------------

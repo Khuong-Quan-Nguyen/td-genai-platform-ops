@@ -1,79 +1,29 @@
-"""Vercel entrypoint tests.
+"""Vercel deployment-shape tests.
 
-A Vercel rewrite replaces the request path with the function's own path, so
-without the RestoreOriginalPath middleware every API call 404s in production
-while passing every local test. These cases simulate the rewritten request
-shape so that regression is caught in CI.
+Vercel's zero-config FastAPI detection picks up the root-level main.py and runs
+`main.app` as one function that receives the caller's real path. A rewrite of
+/api/* onto another path lands every API call on the SPA catch-all instead -
+GETs 404 and POSTs 405 - while every test against `main.app` still passes.
+These cases pin the config so that regression is caught in CI.
 """
-import pytest
-from fastapi.testclient import TestClient
+import json
+from pathlib import Path
 
-from api.index import app
-
-
-@pytest.fixture
-def client():
-    return TestClient(app)
+ROOT = Path(__file__).resolve().parent.parent
+VERCEL = json.loads((ROOT / "vercel.json").read_text())
 
 
-def test_health_through_rewrite(client):
-    r = client.get("/api/index", params={"__path": "v1/health"})
-    assert r.status_code == 200
-    assert r.json()["version"]
+def test_no_rewrite_touches_api_paths():
+    for rule in VERCEL.get("rewrites", []):
+        assert not rule["source"].startswith("/api"), rule
+        assert not rule["destination"].startswith("/api"), rule
 
 
-def test_audit_trail_through_rewrite(client):
-    r = client.get("/api/index", params={"__path": "v1/audit-trail"})
-    assert r.status_code == 200
-    assert "records" in r.json()
+def test_function_config_targets_the_detected_entrypoint():
+    """Vercel keys function settings by the resolved entrypoint file."""
+    assert set(VERCEL.get("functions", {})) == {"main.py"}
 
 
-def test_leading_slash_in_path_param(client):
-    """Vercel's $1 capture may or may not carry a leading slash."""
-    r = client.get("/api/index", params={"__path": "/v1/health"})
-    assert r.status_code == 200
-
-
-def test_caller_query_params_survive(client):
-    r = client.get("/api/index", params={"__path": "v1/audit-trail", "limit": "3"})
-    assert r.status_code == 200
-
-
-def test_unknown_route_still_404s(client):
-    r = client.get("/api/index", params={"__path": "v1/does-not-exist"})
-    assert r.status_code == 404
-
-
-def test_post_body_survives_rewrite(client, monkeypatch):
-    """The rewrite must not disturb the request body."""
-    import agent
-    from models import ContextDomain
-
-    def _run(query, context=ContextDomain.GENERAL):
-        return agent.AgentResult(text="ok", input_tokens=1, output_tokens=1,
-                                 model="claude-opus-5")
-
-    monkeypatch.setattr(agent, "run", _run)
-    r = client.post(
-        "/api/index",
-        params={"__path": "v1/code-assist"},
-        json={"query": "hello", "user_id": "u1"},
-    )
-    assert r.status_code == 200
-    assert r.json()["response"] == "ok"
-
-
-def test_stripped_prefix_shape(client):
-    """Some serverless hosts strip the prefix that selected the function.
-
-    The router is mounted at both /api/v1 and /v1 so the same build works
-    wherever it runs.
-    """
-    assert client.get("/v1/health").status_code == 200
-    assert client.get("/api/v1/health").status_code == 200
-
-
-def test_both_mounts_return_same_payload(client):
-    a = client.get("/v1/health").json()
-    b = client.get("/api/v1/health").json()
-    assert a == b
+def test_no_competing_api_directory_function():
+    """Any .py under api/ becomes its own function and can shadow main.app."""
+    assert not list((ROOT / "api").glob("*.py"))
